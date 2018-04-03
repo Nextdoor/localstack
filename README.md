@@ -103,6 +103,8 @@ localstack start
 
 **Note**: Please do **not** use `sudo` or the `root` user - *LocalStack*
 should be installed and started entirely under a local non-root user.
+If you have problems with permissions in MacOS X Sierra,
+install with `pip install --user localstack`
 
 ## Running in Docker
 
@@ -260,7 +262,7 @@ duration of the test.  The container can be configured by using the @LocalstackD
 
 ```
 @RunWith(LocalstackDockerTestRunner.class)
-@LocalstackDockerProperties(randomizePorts = true)
+@LocalstackDockerProperties(randomizePorts = true, services = { "sqs", "kinesis:77077" })
 public class MyDockerCloudAppTest {
 
   @Test
@@ -278,7 +280,7 @@ Simply add the following dependency to your `pom.xml` file:
 <dependency>
     <groupId>cloud.localstack</groupId>
     <artifactId>localstack-utils</artifactId>
-    <version>0.1.9</version>
+    <version>0.1.12</version>
 </dependency>
 ```
 
@@ -353,6 +355,7 @@ localstack web
 
 ## Change Log
 
+* v0.8.6: Fixes for Windows installation; bump ES to 6.2.0; support filter policy for SNS; upgrade kinesalite; refactor JUnit runner; support Lambda PutFunctionConcurrency and GetEventSourceMapping; fixes for Terraform; add golang support to Lambda; fix file permission issue in Java Lambda tests; fix S3 bucket notification config
 * v0.8.5: Fix DDB streams event type; implement CF Fn::GetAZs; async lambda for DDB events; fix S3 content-type; fix CF deployer for SQS; fix S3 ExposePorts; fix message subject in SNS; support for Firehose -> ES; pass external env vars to containers from Java; add mock for list-queue-tags; enhance docker test runner; fix Windows installation issues; new version of Java libs
 * v0.8.4: Fix `pipenv` dependency issue; Docker JUnit test runner; POJO type for Java Lambda RequestHandler; Java Lambda DynamoDB event; reuse Docker containers for Lambda invocations; API Gateway wildcard path segments; fix SNS RawMessageDelivery
 * v0.8.3: Fix DDB stream events for UPDATE operations; fix DDB streams sequence numbers; fix transfer-encoding for DDB; fix requests with missing content-length header; support non-ascii content in DynamoDB items; map external port for SQS queue URLs; default to LAMBDA_REMOTE_DOCKER=true if running in Docker; S3 lifecycle support; reduce Docker image size

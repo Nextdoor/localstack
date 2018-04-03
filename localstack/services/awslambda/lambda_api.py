@@ -19,10 +19,15 @@ from flask import Flask, Response, jsonify, request, make_response
 from localstack import config
 from localstack.services import generic_proxy
 from localstack.services.awslambda import lambda_executors
-from localstack.services.awslambda.lambda_executors import (LAMBDA_RUNTIME_PYTHON27,
-    LAMBDA_RUNTIME_PYTHON36, LAMBDA_RUNTIME_NODEJS, LAMBDA_RUNTIME_NODEJS610, LAMBDA_RUNTIME_JAVA8)
-from localstack.utils.common import (to_str, load_file, save_file, TMP_FILES,
-    unzip, is_zip_file, run, short_uid, is_jar_archive, timestamp, TIMESTAMP_FORMAT_MILLIS)
+from localstack.services.awslambda.lambda_executors import (
+    LAMBDA_RUNTIME_PYTHON27,
+    LAMBDA_RUNTIME_PYTHON36,
+    LAMBDA_RUNTIME_NODEJS,
+    LAMBDA_RUNTIME_NODEJS610,
+    LAMBDA_RUNTIME_JAVA8,
+    LAMBDA_RUNTIME_GOLANG)
+from localstack.utils.common import (to_str, load_file, save_file, TMP_FILES, ensure_readable,
+    mkdir, unzip, is_zip_file, run, short_uid, is_jar_archive, timestamp, TIMESTAMP_FORMAT_MILLIS)
 from localstack.utils.aws import aws_stack, aws_responses
 from localstack.utils.analytics import event_publisher
 from localstack.utils.cloudwatch.cloudwatch_util import cloudwatched
@@ -293,7 +298,12 @@ def exec_lambda_code(script, handler_function='handler', lambda_cwd=None, lambda
 
 def get_handler_file_from_name(handler_name, runtime=LAMBDA_DEFAULT_RUNTIME):
     # TODO: support Java Lambdas in the future
-    file_ext = '.js' if runtime.startswith(LAMBDA_RUNTIME_NODEJS) else '.py'
+    if runtime.startswith(LAMBDA_RUNTIME_NODEJS):
+        file_ext = '.js'
+    elif runtime.startswith(LAMBDA_RUNTIME_GOLANG):
+        file_ext = ''
+    else:
+        file_ext = '.py'
     return '%s%s' % (handler_name.split('.')[0], file_ext)
 
 
@@ -343,7 +353,7 @@ def set_function_code(code, lambda_name):
 
     # save tmp file
     tmp_dir = '%s/zipfile.%s' % (config.TMP_FOLDER, short_uid())
-    run('mkdir -p %s' % tmp_dir)
+    mkdir(tmp_dir)
     tmp_file = '%s/%s' % (tmp_dir, LAMBDA_ZIP_FILE_NAME)
     save_file(tmp_file, zip_file_content)
     TMP_FILES.append(tmp_dir)
@@ -360,6 +370,8 @@ def set_function_code(code, lambda_name):
             if len(jar_files) == 1:
                 main_file = jar_files[0]
         if os.path.isfile(main_file):
+            # make sure the file is actually readable, then read contents
+            ensure_readable(main_file)
             with open(main_file, 'rb') as file_obj:
                 zip_file_content = file_obj.read()
         else:
@@ -474,7 +486,7 @@ def create_function():
         return jsonify(result or {})
     except Exception as e:
         del arn_to_lambda[arn]
-        return error_response('Unknown error: %s' % e)
+        return error_response('Unknown error: %s %s' % (e, traceback.format_exc()))
 
 
 @app.route('%s/functions/<function>' % PATH_ROOT, methods=['GET'])
@@ -497,6 +509,9 @@ def get_function(function):
                     'Location': '%s/code' % request.url
                 }
             }
+            lambda_details = arn_to_lambda.get(func['FunctionArn'])
+            if lambda_details.concurrency is not None:
+                result['Concurrency'] = lambda_details.concurrency
             return jsonify(result)
     result = {
         'ResponseMetadata': {
@@ -680,6 +695,23 @@ def list_event_source_mappings():
     return jsonify(response)
 
 
+@app.route('%s/event-source-mappings/<mapping_uuid>' % PATH_ROOT, methods=['GET'])
+def get_event_source_mapping(mapping_uuid):
+    """ Get an existing event source mapping
+        ---
+        operationId: 'getEventSourceMapping'
+        parameters:
+            - name: 'request'
+              in: body
+    """
+    mappings = event_source_mappings
+    mappings = [m for m in mappings if mapping_uuid == m.get('UUID')]
+
+    if len(mappings) == 0:
+        return error_response('The resource you requested does not exist.', 404, error_type='ResourceNotFoundException')
+    return jsonify(mappings[0])
+
+
 @app.route('%s/event-source-mappings/' % PATH_ROOT, methods=['POST'])
 def create_event_source_mapping():
     """ Create new event source mapping
@@ -779,6 +811,20 @@ def list_aliases(function):
         return error_response('Function not found: %s' % arn, 404, error_type='ResourceNotFoundException')
     return jsonify({'Aliases': sorted(arn_to_lambda.get(arn).aliases.values(),
                                       key=lambda x: x['Name'])})
+
+
+@app.route('/<version>/functions/<function>/concurrency', methods=['PUT'])
+def put_concurrency(version, function):
+    # the version for put_concurrency != PATH_ROOT, at the time of this
+    # writing it's: /2017-10-31 for this endpoint
+    # https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionConcurrency.html
+    arn = func_arn(function)
+    data = json.loads(request.data)
+    lambda_details = arn_to_lambda.get(arn)
+    if not lambda_details:
+        return error_response('Function not found: %s' % arn, 404, error_type='ResourceNotFoundException')
+    lambda_details.concurrency = data
+    return jsonify(data)
 
 
 def serve(port, quiet=True):

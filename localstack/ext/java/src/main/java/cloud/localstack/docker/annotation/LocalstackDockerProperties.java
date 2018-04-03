@@ -4,12 +4,14 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.lang.annotation.Inherited;
 
 /**
  * An annotation to provide parameters to the LocalstackDockerTestRunner
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
+@Inherited
 public @interface LocalstackDockerProperties {
 
     /**
@@ -34,5 +36,11 @@ public @interface LocalstackDockerProperties {
      *  in order to prevent conflicts with other localstack containers running on the same machine
      */
     boolean randomizePorts() default false;
+
+    /**
+     * Determines which services should be run when the localstack starts. When empty, all the services available get
+     * up and running.
+     */
+    String[] services() default {};
 }
 

@@ -27,6 +27,12 @@ class TestLambdaAPI(unittest.TestCase):
         self.app.testing = True
         self.client = self.app.test_client()
 
+    def test_get_event_source_mapping(self):
+        with self.app.test_request_context():
+            lambda_api.event_source_mappings.append({'UUID': self.TEST_UUID})
+            result = lambda_api.get_event_source_mapping(self.TEST_UUID)
+            self.assertEqual(json.loads(result.get_data()).get('UUID'), self.TEST_UUID)
+
     def test_delete_event_source_mapping(self):
         with self.app.test_request_context():
             lambda_api.event_source_mappings.append({'UUID': self.TEST_UUID})
@@ -206,6 +212,35 @@ class TestLambdaAPI(unittest.TestCase):
         executor = lambda_executors.EXECUTOR_CONTAINERS_REUSE
         name = executor.get_container_name('arn:aws:lambda:us-east-1:00000000:function:my_function_name')
         self.assertEqual(name, 'localstack_lambda_arn_aws_lambda_us-east-1_00000000_function_my_function_name')
+
+    def test_put_concurrency(self):
+        with self.app.test_request_context():
+            self._create_function(self.FUNCTION_NAME)
+            # note: PutFunctionConcurrency is mounted at: /2017-10-31
+            # NOT lambda_api.PATH_ROOT
+            # https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionConcurrency.html
+            concurrency_data = {'ReservedConcurrentExecutions': 10}
+            response = self.client.put('/2017-10-31/functions/{0}/concurrency'.format(self.FUNCTION_NAME),
+                                       data=json.dumps(concurrency_data))
+
+            result = json.loads(response.get_data())
+            self.assertDictEqual(concurrency_data, result)
+
+    def test_concurrency_get_function(self):
+        with self.app.test_request_context():
+            self._create_function(self.FUNCTION_NAME)
+            # note: PutFunctionConcurrency is mounted at: /2017-10-31
+            # NOT lambda_api.PATH_ROOT
+            # https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionConcurrency.html
+            concurrency_data = {'ReservedConcurrentExecutions': 10}
+            self.client.put('/2017-10-31/functions/{0}/concurrency'.format(self.FUNCTION_NAME),
+                            data=json.dumps(concurrency_data))
+
+            response = self.client.get('{0}/functions/{1}'.format(lambda_api.PATH_ROOT, self.FUNCTION_NAME))
+
+            result = json.loads(response.get_data())
+            self.assertTrue('Concurrency' in result)
+            self.assertDictEqual(concurrency_data, result['Concurrency'])
 
     def _create_function(self, function_name):
         arn = lambda_api.func_arn(function_name)

@@ -324,6 +324,17 @@ def mkdir(folder):
         os.makedirs(folder)
 
 
+def ensure_readable(file_path, default_perms=None):
+    if default_perms is None:
+        default_perms = 0o644
+    try:
+        with open(file_path, 'rb'):
+            pass
+    except Exception:
+        LOGGER.info('Updating permissions as file is currently not readable: %s' % file_path)
+        os.chmod(file_path, default_perms)
+
+
 def chmod_r(path, mode):
     """Recursive chmod"""
     os.chmod(path, mode)
@@ -486,17 +497,41 @@ def unzip(path, target_dir):
     except Exception as e:
         LOGGER.warning('Unable to open zip file: %s: %s' % (path, e))
         raise e
-    zip_ref.extractall(target_dir)
+    # Make sure to preserve file permissions in the zip file
+    # https://www.burgundywall.com/post/preserving-file-perms-with-python-zipfile-module
+    for file_entry in zip_ref.infolist():
+        _unzip_file_entry(zip_ref, file_entry, target_dir)
     zip_ref.close()
 
 
+def _unzip_file_entry(zip_ref, file_entry, target_dir):
+    """
+    Extracts a Zipfile entry and preserves permissions
+    """
+    zip_ref.extract(file_entry.filename, path=target_dir)
+    out_path = os.path.join(target_dir, file_entry.filename)
+    perm = file_entry.external_attr >> 16
+    os.chmod(out_path, perm)
+
+
 def is_jar_archive(content):
-    # TODO Simple stupid heuristic to determine whether a file is a JAR archive
+    has_class_content = False
     try:
-        return 'class' in content and 'META-INF' in content
+        has_class_content = 'class' in content
     except TypeError:
         # in Python 3 we need to use byte strings for byte-based file content
-        return b'class' in content and b'META-INF' in content
+        has_class_content = b'class' in content
+    if not has_class_content:
+        return False
+    try:
+        with tempfile.NamedTemporaryFile() as tf:
+            tf.write(content)
+            tf.flush()
+            with zipfile.ZipFile(tf.name, 'r') as zf:
+                zf.infolist()
+    except Exception:
+        return False
+    return True
 
 
 def is_root():

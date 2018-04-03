@@ -28,6 +28,9 @@ class ProxyListenerDynamoDB(ProxyListener):
 
     thread_local = threading.local()
 
+    def __init__(self):
+        self._table_ttl_map = {}
+
     def forward_request(self, method, path, data, headers):
         data = json.loads(to_str(data))
 
@@ -35,10 +38,51 @@ class ProxyListenerDynamoDB(ProxyListener):
             return error_response_throughput()
 
         action = headers.get('X-Amz-Target')
-        if action in ('%s.PutItem' % ACTION_PREFIX, '%s.UpdateItem' % ACTION_PREFIX):
+        if action in ('%s.PutItem' % ACTION_PREFIX, '%s.UpdateItem' % ACTION_PREFIX, '%s.DeleteItem' % ACTION_PREFIX):
             # find an existing item and store it in a thread-local, so we can access it in return_response,
             # in order to determine whether an item already existed (MODIFY) or not (INSERT)
             ProxyListenerDynamoDB.thread_local.existing_item = find_existing_item(data)
+        elif action == '%s.UpdateTimeToLive' % ACTION_PREFIX:
+            # TODO: TTL status is maintained/mocked but no real expiry is happening for items
+            response = Response()
+            response.status_code = 200
+            self._table_ttl_map[data['TableName']] = {
+                'AttributeName': data['TimeToLiveSpecification']['AttributeName'],
+                'Status': data['TimeToLiveSpecification']['Enabled']
+            }
+            response._content = json.dumps({'TimeToLiveSpecification': data['TimeToLiveSpecification']})
+            fix_headers_for_updated_response(response)
+            return response
+        elif action == '%s.DescribeTimeToLive' % ACTION_PREFIX:
+            response = Response()
+            response.status_code = 200
+            if data['TableName'] in self._table_ttl_map:
+                if self._table_ttl_map[data['TableName']]['Status']:
+                    ttl_status = 'ENABLED'
+                else:
+                    ttl_status = 'DISABLED'
+                response._content = json.dumps({
+                    'TimeToLiveDescription': {
+                        'AttributeName': self._table_ttl_map[data['TableName']]['AttributeName'],
+                        'TimeToLiveStatus': ttl_status
+                    }
+                })
+            else:  # TTL for dynamodb table not set
+                response._content = json.dumps({'TimeToLiveDescription': {'TimeToLiveStatus': 'DISABLED'}})
+            fix_headers_for_updated_response(response)
+            return response
+        elif action == '%s.TagResource' % ACTION_PREFIX or action == '%s.UntagResource' % ACTION_PREFIX:
+            response = Response()
+            response.status_code = 200
+            response._content = ''  # returns an empty body on success.
+            fix_headers_for_updated_response(response)
+            return response
+        elif action == '%s.ListTagsOfResource' % ACTION_PREFIX:
+            response = Response()
+            response.status_code = 200
+            response._content = json.dumps({'Tags': []})  # TODO: mocked and returns an empty list of tags for now.
+            fix_headers_for_updated_response(response)
+            return response
 
         return True
 
@@ -120,8 +164,10 @@ class ProxyListenerDynamoDB(ProxyListener):
                     response._content = json.dumps(content)
                     fix_headers_for_updated_response(response)
         elif action == '%s.DeleteItem' % ACTION_PREFIX:
+            old_item = ProxyListenerDynamoDB.thread_local.existing_item
             record['eventName'] = 'REMOVE'
             record['dynamodb']['Keys'] = data['Key']
+            record['dynamodb']['OldImage'] = old_item
         elif action == '%s.CreateTable' % ACTION_PREFIX:
             if 'StreamSpecification' in data:
                 create_dynamodb_stream(data)
