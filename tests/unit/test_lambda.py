@@ -1,7 +1,7 @@
 import unittest
 import json
 from localstack.services.awslambda import lambda_api, lambda_executors
-from localstack.utils.aws.aws_models import LambdaFunction
+from localstack.utils.aws import aws_models
 
 
 class TestLambdaAPI(unittest.TestCase):
@@ -252,9 +252,10 @@ class TestLambdaAPI(unittest.TestCase):
 
     def _create_function(self, function_name):
         arn = lambda_api.func_arn(function_name)
-        lambda_api.arn_to_lambda[arn] = LambdaFunction(arn)
-        lambda_api.arn_to_lambda[arn].versions = {'$LATEST': {'CodeSize': self.CODE_SIZE}}
-        lambda_api.arn_to_lambda[arn].handler = self.HANDLER
-        lambda_api.arn_to_lambda[arn].runtime = self.RUNTIME
-        lambda_api.arn_to_lambda[arn].timeout = self.TIMEOUT
-        lambda_api.arn_to_lambda[arn].envvars = {}
+        config = aws_models.FunctionConfiguration(
+            code_size=self.CODE_SIZE, handler=self.HANDLER, runtime=self.RUNTIME,
+            timeout=self.TIMEOUT)
+        mapping = aws_models.FunctionMapping(
+            executor=lambda x: x,
+            function_configuration=config)
+        lambda_api.arn_to_lambda[arn] = aws_models.LambdaFunction(arn, {'$LATEST': mapping})
