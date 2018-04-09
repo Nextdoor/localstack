@@ -1,21 +1,25 @@
 from __future__ import print_function
 
-import os
-import sys
+import base64
+import copy
+import glob
+import imp
 import json
-import uuid
+import logging
+import os
+import pytz
+import sys
+import threading
 import time
 import traceback
-import logging
-import base64
-import threading
-import imp
-import glob
+import uuid
 from io import BytesIO
 from datetime import datetime
 from six import iteritems
 from six.moves import cStringIO as StringIO
+
 from flask import Flask, Response, jsonify, request, make_response
+
 from localstack import config
 from localstack.services import generic_proxy
 from localstack.services.awslambda import lambda_executors
@@ -31,7 +35,7 @@ from localstack.utils.common import (to_str, load_file, save_file, TMP_FILES, en
 from localstack.utils.aws import aws_stack, aws_responses
 from localstack.utils.analytics import event_publisher
 from localstack.utils.cloudwatch.cloudwatch_util import cloudwatched
-from localstack.utils.aws.aws_models import LambdaFunction
+from localstack.utils.aws import aws_models
 
 APP_NAME = 'lambda_api'
 PATH_ROOT = '/2015-03-31'
@@ -207,25 +211,29 @@ def get_event_sources(func_name=None, source_arn=None):
     return result
 
 
-def get_function_version(arn, version):
-    func = arn_to_lambda.get(arn)
-    return format_func_details(func, version=version, always_add_version=True)
-
-
 def publish_new_function_version(arn):
     versions = arn_to_lambda.get(arn).versions
     if len(versions) == 1:
         last_version = 0
     else:
         last_version = max([int(key) for key in versions.keys() if key != '$LATEST'])
-    versions[str(last_version + 1)] = {'CodeSize': versions.get('$LATEST').get('CodeSize'),
-                                  'Function': versions.get('$LATEST').get('Function')}
-    return get_function_version(arn, str(last_version + 1))
+    function_mapping_copy = copy.deepcopy(versions['$LATEST'])
+    versions[str(last_version + 1)] = copy.deepcopy(function_mapping_copy)
+    return function_mapping_copy.to_dict()
 
 
-def do_list_versions(arn):
-    return sorted([get_function_version(arn, version) for version in
-                   arn_to_lambda.get(arn).versions.keys()], key=lambda k: str(k.get('Version')))
+def get_version_function_mappings(arn):
+    """Get all FunctionMappings for each version of a function.
+
+    Args:
+        arn (str): Function ARN to lookup.
+
+    Returns:
+        list FunctionMapping
+    """
+    func_details = arn_to_lambda[arn]
+    sorted_versions = sorted(func_details.versions.keys())
+    return [func_details[version] for version in sorted_versions]
 
 
 def do_update_alias(arn, alias, version, description=None):
@@ -317,18 +325,19 @@ def error_response(msg, code=500, error_type='InternalFailure'):
     return aws_responses.flask_error_response(msg, code=code, error_type=error_type)
 
 
-def set_function_code(code, lambda_name):
+def set_function_code(code, function_config):
 
     def generic_handler(event, context):
-        raise Exception(('Unable to find executor for Lambda function "%s". ' +
-            'Note that Node.js Lambdas currently require LAMBDA_EXECUTOR=docker') % lambda_name)
+        raise Exception(
+            'Unable to find executor for Lambda function "{}". '
+            'Note that Node.js Lambdas currently require LAMBDA_EXECUTOR=docker'.format(
+                function_config.FunctionName))
 
     lambda_handler = generic_handler
-    lambda_cwd = None
-    arn = func_arn(lambda_name)
-    runtime = arn_to_lambda[arn].runtime
-    handler_name = arn_to_lambda.get(arn).handler
-    lambda_environment = arn_to_lambda.get(arn).envvars
+    arn = function_config.FunctionArn
+    runtime = function_config.Runtime
+    handler_name = function_config.Handler
+    lambda_environment = function_config.Environment
     if not handler_name:
         handler_name = LAMBDA_DEFAULT_HANDLER
     handler_file = get_handler_file_from_name(handler_name, runtime=runtime)
@@ -385,7 +394,7 @@ def set_function_code(code, lambda_name):
 
         def execute(event, context):
             result, log_output = lambda_executors.EXECUTOR_LOCAL.execute_java_lambda(event, context,
-                handler=arn_to_lambda[arn].handler, main_file=main_file)
+                handler=handler_name, main_file=main_file)
             return result
 
         lambda_handler = execute
@@ -401,9 +410,9 @@ def set_function_code(code, lambda_name):
     if not is_zip and not is_jar:
         raise Exception('Uploaded Lambda code is neither a ZIP nor JAR file.')
 
-    add_function_mapping(lambda_name, lambda_handler, lambda_cwd)
-
-    return {'FunctionName': lambda_name}
+    return aws_models.FunctionMapping(
+        executor=lambda_handler, working_directory=lambda_cwd,
+        function_configuration=function_config)
 
 
 def do_list_functions():
@@ -412,27 +421,8 @@ def do_list_functions():
         func_name = f_arn.split(':function:')[-1]
         arn = func_arn(func_name)
         func_details = arn_to_lambda.get(arn)
-        funcs.append(format_func_details(func_details))
+        funcs.append(func_details.function_configuration.to_dict())
     return funcs
-
-
-def format_func_details(func_details, version=None, always_add_version=False):
-    version = version or '$LATEST'
-    result = {
-        'Version': version,
-        'FunctionArn': func_details.arn(),
-        'FunctionName': func_details.name(),
-        'CodeSize': func_details.get_version(version).get('CodeSize'),
-        'Handler': func_details.handler,
-        'Runtime': func_details.runtime,
-        'Timeout': func_details.timeout,
-        'Environment': func_details.envvars,
-        # 'Description': ''
-        # 'MemorySize': 192,
-    }
-    if (always_add_version or version != '$LATEST') and len(result['FunctionArn'].split(':')) <= 7:
-        result['FunctionArn'] += ':%s' % (version)
-    return result
 
 
 # ------------
@@ -459,31 +449,38 @@ def create_function():
         if arn in arn_to_lambda:
             return error_response('Function already exist: %s' %
                 lambda_name, 409, error_type='ResourceConflictException')
-        arn_to_lambda[arn] = func_details = LambdaFunction(arn)
-        func_details.versions = {'$LATEST': {'CodeSize': 50}}
-        func_details.handler = data['Handler']
-        func_details.runtime = data['Runtime']
-        func_details.envvars = data.get('Environment', {}).get('Variables', {})
-        func_details.timeout = data.get('Timeout')
-        result = set_function_code(data['Code'], lambda_name)
+
+        dead_letter_config = aws_models.DeadLetterConfig.from_json(
+            data.get('DeadLetterConfig')) if 'DeadLetterConfig' in data else None
+        environment = aws_models.Environment.from_json(
+            data.get('Environment')) if 'Environment' in data else None
+        tracing_config = aws_models.TracingConfig.from_json(
+            data.get('TracingConfig')) if 'TracingConfig' in data else None
+
+        function_config = aws_models.FunctionConfiguration(
+            code_size=50,
+            dead_letter_config=dead_letter_config,
+            environment=environment,
+            function_arn=arn,
+            function_name=lambda_name,
+            handler=data['Handler'],
+            kms_key_arn=data.get('KMSKeyArn'),
+            last_modified=datetime.now(pytz.UTC).isoformat(),
+            memory_size=data.get('MemorySize'),
+            role=data.get('Role'),
+            runtime=data['Runtime'],
+            timeout=data.get('Timeout'),
+            tracing_config=tracing_config,
+            version='$LATEST'
+        )
+
+        result = set_function_code(data['Code'], function_config)
         if isinstance(result, Response):
             del arn_to_lambda[arn]
             return result
-        result.update({
-            'DeadLetterConfig': data.get('DeadLetterConfig'),
-            'Description': data.get('Description'),
-            'Environment': {'Error': {}, 'Variables': func_details.envvars},
-            'FunctionArn': arn,
-            'FunctionName': lambda_name,
-            'Handler': func_details.handler,
-            'MemorySize': data.get('MemorySize'),
-            'Role': data.get('Role'),
-            'Runtime': func_details.runtime,
-            'Timeout': data.get('Timeout'),
-            'TracingConfig': {},
-            'VpcConfig': {'SecurityGroupIds': [None], 'SubnetIds': [None], 'VpcId': None}
-        })
-        return jsonify(result or {})
+        versions = {'$LATEST': result}
+        arn_to_lambda[arn] = aws_models.LambdaFunction(arn=arn, versions=versions)
+        return jsonify(function_config.to_dict())
     except Exception as e:
         del arn_to_lambda[arn]
         return error_response('Unknown error: %s %s' % (e, traceback.format_exc()))
@@ -573,9 +570,16 @@ def update_function_code(function):
             - name: 'request'
               in: body
     """
-    data = json.loads(to_str(request.data))
-    result = set_function_code(data, function)
-    return jsonify(result or {})
+    data = request.json()
+    arn = func_arn(function)
+    function_definition = arn_to_lambda[arn]
+    latest_mapping = function_definition.latest()
+    result = set_function_code(data, latest_mapping.function_configuration)
+    if isinstance(result, Response):
+        del arn_to_lambda[arn]
+        return result
+    function_definition.set_latest(result)
+    return jsonify(result.function_configuration.to_dict())
 
 
 @app.route('%s/functions/<function>/code' % PATH_ROOT, methods=['GET'])
@@ -586,7 +590,8 @@ def get_function_code(function):
         parameters:
     """
     arn = func_arn(function)
-    lambda_cwd = arn_to_lambda[arn].cwd
+    latest_mapping = arn_to_lambda[arn].latest()
+    lambda_cwd = latest_mapping.working_directory
     tmp_file = '%s/%s' % (lambda_cwd, LAMBDA_ZIP_FILE_NAME)
     return Response(load_file(tmp_file, mode='rb'),
             mimetype='application/zip',
@@ -604,7 +609,7 @@ def get_function_configuration(function):
     lambda_details = arn_to_lambda.get(arn)
     if not lambda_details:
         return error_response('Function not found: %s' % arn, 404, error_type='ResourceNotFoundException')
-    result = format_func_details(lambda_details)
+    result = lambda_details.function_configuration.to_dict()
     return jsonify(result)
 
 
@@ -624,14 +629,15 @@ def update_function_configuration(function):
     LAMBDA_EXECUTOR.cleanup(arn)
 
     lambda_details = arn_to_lambda[arn]
+    function_config = lambda_details.versions['$LATEST'].function_configuration
     if data.get('Handler'):
-        lambda_details.handler = data['Handler']
+        function_config.Handler = data['Handler']
     if data.get('Runtime'):
-        lambda_details.runtime = data['Runtime']
+        function_config.Runtime = data['Runtime']
     if data.get('Environment'):
-        lambda_details.envvars = data.get('Environment', {}).get('Variables', {})
+        function_config.environment = aws_models.Environment.from_json(data['Environment'])
     if data.get('Timeout'):
-        lambda_details.timeout = data['Timeout']
+        function_config.timeout = data['Timeout']
     result = {}
     return jsonify(result)
 
@@ -756,6 +762,7 @@ def delete_event_source_mapping(mapping_uuid):
 
 @app.route('%s/functions/<function>/versions' % PATH_ROOT, methods=['POST'])
 def publish_version(function):
+    """Publishes a version of the function from the current snapshot of $LATEST"""
     arn = func_arn(function)
     if arn not in arn_to_lambda:
         return error_response('Function not found: %s' % arn, 404, error_type='ResourceNotFoundException')
@@ -767,7 +774,9 @@ def list_versions(function):
     arn = func_arn(function)
     if arn not in arn_to_lambda:
         return error_response('Function not found: %s' % arn, 404, error_type='ResourceNotFoundException')
-    return jsonify({'Versions': do_list_versions(arn)})
+    function_mappings = get_version_function_mappings(arn)
+    function_configurations = [fm.function_configuration.to_dict() for fm in function_mappings]
+    return jsonify({'Versions': function_configurations})
 
 
 @app.route('%s/functions/<function>/aliases' % PATH_ROOT, methods=['POST'])

@@ -157,28 +157,49 @@ class FirehoseStream(KinesisStream):
 
 
 class LambdaFunction(Component):
-    def __init__(self, arn):
+    def __init__(self, arn, versions):
+        """Initializes a LambdaFunction.
+
+        Args:
+            arn (str): ARN of the function.
+            versions (dict string FunctionMapping):
+                A mapping of version names to FunctionMappings.
+        """
         super(LambdaFunction, self).__init__(arn)
         self.event_sources = []
         self.targets = []
-        self.versions = {}
-        self.aliases = {}
-        self.envvars = {}
-        self.concurrency = None
-        self.runtime = None
-        self.handler = None
         self.cwd = None
-        self.timeout = None
+        self.versions = versions
+        self.aliases = {}
+        self.concurrency = None
 
     def get_version(self, version):
         return self.versions.get(version)
 
     def name(self):
-        # Example ARN: arn:aws:lambda:aws-region:acct-id:function:helloworld:1
-        return self.id.split(':')[6]
+        return self.versions['$LATEST'].FunctionName
 
     def arn(self):
         return self.id
+
+    def qualifier_exists(self, qualifier):
+        return qualifier in self.aliases or qualifier in self.versions
+
+    def latest(self):
+        """Retrieves the '$LATEST' FunctionMapping
+
+        Returns:
+            FunctionMapping
+        """
+        return self.versions['$LATEST']
+
+    def set_latest(self, function_mapping):
+        """Sets the '$LATEST' FunctionMapping.
+
+        Args:
+            function_mapping (FunctionMapping): Function mapping to set for 'latest'.
+        """
+        self.versions['$LATEST'] = function_mapping
 
     def function(self, qualifier=None):
         if not qualifier:
@@ -187,11 +208,106 @@ class LambdaFunction(Component):
             self.aliases.get(qualifier).get('FunctionVersion')
         return self.versions.get(version).get('Function')
 
-    def qualifier_exists(self, qualifier):
-        return qualifier in self.aliases or qualifier in self.versions
-
     def __str__(self):
         return '<%s:%s>' % (self.__class__.__name__, self.name())
+
+
+class FunctionMapping(object):
+    """A function handler and configuration."""
+    def __init__(self, executor, working_directory=None, function_configuration=None):
+        """Initializes a FunctionHandler.
+
+        Args:
+            executor (func): Function that handles the lambda.
+
+        Keyword Args:
+            working_directory (str): Directory to run the function in.
+            function_configuration (FunctionConfiguration): Configuration of the function.
+        """
+        self.executor = executor
+        self.working_directory = working_directory
+        self.function_configuration = function_configuration
+
+
+class DictSerializable(object):
+    """A superclass that automatically renders all object properties to a dict."""
+    def to_dict(self):
+        result = {}
+        for key, value in self.__dict__.items():
+            if value is None:
+                continue
+            try:
+                result[key] = value.to_dict()
+            except AttributeError:
+                result[key] = value
+        return result
+
+
+class FunctionConfiguration(DictSerializable):
+    """https://docs.aws.amazon.com/lambda/latest/dg/API_FunctionConfiguration.html"""
+    def __init__(self, code_sha_256=None, code_size=None, dead_letter_config=None,
+                 description=None, environment=None, function_arn=None, function_name=None,
+                 handler=None, kms_key_arn=None, last_modified=None, master_arn=None,
+                 memory_size=None, revision_id=None, role=None, runtime=None, timeout=300,
+                 tracing_config=None, version=None, vpc_config=None):
+        self.CodeSha256 = code_sha_256
+        self.CodeSize = code_size
+        self.DeadLetterConfig = dead_letter_config
+        self.Description = description
+        self.Environment = environment
+        self.FunctionArn = function_arn
+        self.FunctionName = function_name
+        self.Handler = handler
+        self.KMSKeyArn = kms_key_arn
+        self.LastModified = last_modified
+        self.MasterArn = master_arn
+        self.MemorySize = memory_size
+        self.RevisionId = revision_id
+        self.Role = role
+        self.Runtime = runtime
+        self.Timeout = timeout
+        self.TracingConfig = tracing_config
+        self.Version = version
+        self.VpcConfig = vpc_config
+
+
+class Environment(DictSerializable):
+    """https://docs.aws.amazon.com/lambda/latest/dg/API_EnvironmentResponse.html"""
+    def __init__(self, error=None, variables=None):
+        self.Error = error
+        self.Variables = variables
+
+    @classmethod
+    def from_json(cls, json_data):
+        return cls(error=json_data.get('Error'), variables=json_data.get('Variables'))
+
+
+class DeadLetterConfig(DictSerializable):
+    """https://docs.aws.amazon.com/lambda/latest/dg/API_DeadLetterConfig.html"""
+    def __init__(self, target_arn=None):
+        self.TargetArn = target_arn
+
+    @classmethod
+    def from_json(cls, json_data):
+        return cls(target_arn=json_data['TargetArn'])
+
+
+class TracingConfig(DictSerializable):
+    """https://docs.aws.amazon.com/lambda/latest/dg/API_TracingConfig.html"""
+    def __init__(self, mode=None):
+        self.Mode = mode
+
+    @classmethod
+    def from_json(cls, json_data):
+        return cls(mode=json_data['Mode'])
+
+
+class VpcConfig(DictSerializable):
+    """https://docs.aws.amazon.com/lambda/latest/dg/API_VpcConfigResponse.html"""
+    def __init__(self, security_group_ids=None, subnet_ids=None, vpc_id=None):
+        self.SecurityGroupIds = security_group_ids
+        self.SubnetIds = subnet_ids
+        self.VpcId = vpc_id
 
 
 class DynamoDB(Component):
