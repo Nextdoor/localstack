@@ -85,11 +85,28 @@ class LambdaExecutorContainers(LambdaExecutor):
         raise Exception('Not implemented')
 
     def execute(self, func_arn, func_details, event, context=None, version=None, async=False):
+        """Executes a Lambda function.
 
-        lambda_cwd = func_details.cwd
-        runtime = func_details.runtime
-        handler = func_details.handler
-        environment = func_details.envvars.copy()
+        Args:
+            func_arn (str): Function ARN.
+            func_details (LambdaFunction): Lambda function definition.
+            event (dict): Data to pass to the lambda.
+
+        Keyword Args:
+            context (LambdaContext): LambdaContext object
+            version (str): Version of the function to run.
+            async (bool): Whether to run the function asynchronously.
+        """
+        if version:
+            function_mapping = func_details.versions[version]
+        else:
+            function_mapping = func_details.latest()
+
+        lambda_cwd = function_mapping.working_directory
+        runtime = function_mapping.function_configuration.runtime
+        handler = function_mapping.function_configuration.handler
+        variables = function_mapping.function_configuration.Environment.Variables
+        environment = variables.copy() if variables else {}
 
         # configure USE_SSL in environment
         if config.USE_SSL:
@@ -439,13 +456,30 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
 class LambdaExecutorLocal(LambdaExecutor):
 
     def execute(self, func_arn, func_details, event, context=None, version=None, async=False):
-        lambda_cwd = func_details.cwd
-        environment = func_details.envvars.copy()
+        """Execute a Lambda function.
+
+        Args:
+            func_arn (str): Function ARN.
+            func_details (LambdaFunction): Lambda function definition.
+            event (dict): Data to pass to the lambda.
+
+        Keyword Args:
+            context (LambdaContext): LambdaContext object
+            version (str): Version of the function to run.
+            async (bool): Whether to run the function asynchronously.
+        """
+        if version:
+            function_mapping = func_details.versions[version]
+        else:
+            function_mapping = func_details.latest()
+
+        lambda_cwd = function_mapping.working_directory
+        environment = function_mapping.function_configuration.Environment.Variables
 
         # execute the Lambda function in a forked sub-process, sync result via queue
         queue = Queue()
 
-        lambda_function = func_details.function(version)
+        lambda_function = func_details.handler
 
         def do_execute():
             # now we're executing in the child process, safe to change CWD and ENV
