@@ -71,7 +71,6 @@ def test_firehose_s3():
 
 
 def test_kinesis_lambda_sns_ddb_streams():
-
     ddb_lease_table_suffix = '-kclapp'
     dynamodb = aws_stack.connect_to_resource('dynamodb')
     dynamodb_service = aws_stack.connect_to_service('dynamodb')

@@ -1,7 +1,8 @@
-import os
 import json
+import os
 import time
 from io import BytesIO
+
 from localstack.constants import LOCALSTACK_ROOT_FOLDER, LOCALSTACK_MAVEN_VERSION
 from localstack.utils import testutil
 from localstack.utils.aws import aws_stack

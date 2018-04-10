@@ -105,7 +105,12 @@ class LambdaExecutorContainers(LambdaExecutor):
         lambda_cwd = function_mapping.working_directory
         runtime = function_mapping.function_configuration.runtime
         handler = function_mapping.function_configuration.handler
-        variables = function_mapping.function_configuration.Environment.Variables
+
+        # Determine if there is an Environment and it has Variables set.
+        variables = None
+        config_environment = function_mapping. function_configuration.Environment
+        if config_environment and config_environment.Variables:
+            variables = config_environment.Variables
         environment = variables.copy() if variables else {}
 
         # configure USE_SSL in environment
@@ -474,12 +479,15 @@ class LambdaExecutorLocal(LambdaExecutor):
             function_mapping = func_details.latest()
 
         lambda_cwd = function_mapping.working_directory
-        environment = function_mapping.function_configuration.Environment.Variables
+        variables = None
+        if function_mapping.function_configuration.Environment:
+            variables = function_mapping.function_configuration.Environment.Variables
+        environment = variables or {}
 
         # execute the Lambda function in a forked sub-process, sync result via queue
         queue = Queue()
 
-        lambda_function = func_details.handler
+        lambda_function = function_mapping.executor
 
         def do_execute():
             # now we're executing in the child process, safe to change CWD and ENV

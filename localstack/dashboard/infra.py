@@ -8,7 +8,7 @@ from localstack.utils.common import (short_uid, parallelize, is_port_open,
     rm_rf, unzip, download, clean_cache, mktime, load_file, mkdir, run, md5)
 from localstack.utils.aws.aws_models import (ElasticSearch, S3Notification,
     EventSource, DynamoDB, DynamoDBStream, FirehoseStream, S3Bucket, SqsQueue,
-    KinesisShard, KinesisStream, LambdaFunction)
+    KinesisShard, KinesisStream, LambdaFunction, FunctionConfiguration, FunctionMapping)
 from localstack.utils.aws import aws_stack
 from localstack.utils.common import to_str
 from localstack.constants import REGION_LOCAL, DEFAULT_REGION
@@ -210,7 +210,10 @@ def get_lambda_functions(filter='.*', details=False, pool={}, env=None):
         func_name = func['FunctionName']
         if re.match(filter, func_name):
             arn = func['FunctionArn']
-            f = LambdaFunction(arn)
+            function_config = FunctionConfiguration.from_json(func)
+            function_mapping = FunctionMapping(
+                executor=None, function_configuration=function_config)
+            f = LambdaFunction(arn, {'$LATEST': function_mapping})
             pool[arn] = f
             result.append(f)
             if details:
