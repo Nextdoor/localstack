@@ -219,7 +219,7 @@ def publish_new_function_version(arn):
         last_version = max([int(key) for key in versions.keys() if key != '$LATEST'])
     function_mapping_copy = copy.deepcopy(versions['$LATEST'])
     versions[str(last_version + 1)] = copy.deepcopy(function_mapping_copy)
-    return function_mapping_copy.to_dict()
+    return function_mapping_copy.function_configuration.to_dict()
 
 
 def get_version_function_mappings(arn):
@@ -421,7 +421,7 @@ def do_list_functions():
         func_name = f_arn.split(':function:')[-1]
         arn = func_arn(func_name)
         func_details = arn_to_lambda.get(arn)
-        funcs.append(func_details.function_configuration.to_dict())
+        funcs.append(func_details.latest().function_configuration.to_dict())
     return funcs
 
 
@@ -476,7 +476,6 @@ def create_function():
 
         result = set_function_code(data['Code'], function_config)
         if isinstance(result, Response):
-            del arn_to_lambda[arn]
             return result
         versions = {'$LATEST': result}
         arn_to_lambda[arn] = aws_models.LambdaFunction(arn=arn, versions=versions)
@@ -499,7 +498,7 @@ def get_function(function):
     """
     funcs = do_list_functions()
     for func in funcs:
-        if func['FunctionName'] == function:
+        if func.latest().FunctionName == function:
             result = {
                 'Configuration': func,
                 'Code': {
