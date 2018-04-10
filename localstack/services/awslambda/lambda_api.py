@@ -233,7 +233,7 @@ def get_version_function_mappings(arn):
     """
     func_details = arn_to_lambda[arn]
     sorted_versions = sorted(func_details.versions.keys())
-    return [func_details[version] for version in sorted_versions]
+    return [func_details.versions[version] for version in sorted_versions]
 
 
 def do_update_alias(arn, alias, version, description=None):
@@ -481,7 +481,7 @@ def create_function():
         arn_to_lambda[arn] = aws_models.LambdaFunction(arn=arn, versions=versions)
         return jsonify(function_config.to_dict())
     except Exception as e:
-        del arn_to_lambda[arn]
+        arn_to_lambda.pop(arn)
         return error_response('Unknown error: %s %s' % (e, traceback.format_exc()))
 
 
@@ -498,7 +498,7 @@ def get_function(function):
     """
     funcs = do_list_functions()
     for func in funcs:
-        if func.latest().FunctionName == function:
+        if func['FunctionName'] == function:
             result = {
                 'Configuration': func,
                 'Code': {

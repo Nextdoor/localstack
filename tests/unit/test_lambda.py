@@ -1,5 +1,6 @@
-import unittest
+import copy
 import json
+import unittest
 from localstack.services.awslambda import lambda_api, lambda_executors
 from localstack.utils.aws import aws_models
 
@@ -55,21 +56,21 @@ class TestLambdaAPI(unittest.TestCase):
             result = json.loads(lambda_api.publish_version(self.FUNCTION_NAME).get_data())
             result2 = json.loads(lambda_api.publish_version(self.FUNCTION_NAME).get_data())
 
-            expected_result = dict()
-            expected_result['CodeSize'] = self.CODE_SIZE
-            expected_result['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':1'
-            expected_result['FunctionName'] = str(self.FUNCTION_NAME)
-            expected_result['Handler'] = str(self.HANDLER)
-            expected_result['Runtime'] = str(self.RUNTIME)
-            expected_result['Timeout'] = self.TIMEOUT
-            expected_result['Version'] = '1'
-            expected_result['Environment'] = {}
-            expected_result2 = dict(expected_result)
-            expected_result2['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':2'
-            expected_result2['Version'] = '2'
-            expected_result2['Environment'] = {}
-            self.assertDictEqual(expected_result, result)
-            self.assertDictEqual(expected_result2, result2)
+            expected_fc1 = aws_models.FunctionConfiguration(
+                code_size=self.CODE_SIZE,
+                function_arn=str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':1',
+                function_name=str(self.FUNCTION_NAME),
+                handler=str(self.HANDLER),
+                runtime=str(self.RUNTIME),
+                timeout=self.TIMEOUT,
+                version='1',
+                environment=aws_models.Environment())
+
+            expected_fc2 = copy.deepcopy(expected_fc1)
+            expected_fc2.FunctionArn = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':2'
+            expected_fc2.Version = 2
+            self.assertDictEqual(expected_fc1.to_dict(), result)
+            self.assertDictEqual(expected_fc2.to_dict(), result2)
 
     def test_publish_non_existant_function_version_returns_error(self):
         with self.app.test_request_context():
