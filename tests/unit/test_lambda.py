@@ -1,5 +1,6 @@
-import unittest
+import copy
 import json
+import unittest
 from localstack.services.awslambda import lambda_api, lambda_executors
 from localstack.utils.aws import aws_models
 
@@ -55,21 +56,20 @@ class TestLambdaAPI(unittest.TestCase):
             result = json.loads(lambda_api.publish_version(self.FUNCTION_NAME).get_data())
             result2 = json.loads(lambda_api.publish_version(self.FUNCTION_NAME).get_data())
 
-            expected_result = dict()
-            expected_result['CodeSize'] = self.CODE_SIZE
-            expected_result['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':1'
-            expected_result['FunctionName'] = str(self.FUNCTION_NAME)
-            expected_result['Handler'] = str(self.HANDLER)
-            expected_result['Runtime'] = str(self.RUNTIME)
-            expected_result['Timeout'] = self.TIMEOUT
-            expected_result['Version'] = '1'
-            expected_result['Environment'] = {}
-            expected_result2 = dict(expected_result)
-            expected_result2['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':2'
-            expected_result2['Version'] = '2'
-            expected_result2['Environment'] = {}
-            self.assertDictEqual(expected_result, result)
-            self.assertDictEqual(expected_result2, result2)
+            expected_fc1 = aws_models.FunctionConfiguration(
+                code_size=self.CODE_SIZE,
+                function_arn=str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':1',
+                function_name=str(self.FUNCTION_NAME),
+                handler=str(self.HANDLER),
+                runtime=str(self.RUNTIME),
+                timeout=self.TIMEOUT,
+                version='1')
+
+            expected_fc2 = copy.deepcopy(expected_fc1)
+            expected_fc2.FunctionArn = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':2'
+            expected_fc2.Version = '2'
+            self.assertDictEqual(expected_fc1.to_dict(), result)
+            self.assertDictEqual(expected_fc2.to_dict(), result2)
 
     def test_publish_non_existant_function_version_returns_error(self):
         with self.app.test_request_context():
@@ -86,25 +86,25 @@ class TestLambdaAPI(unittest.TestCase):
 
             result = json.loads(lambda_api.list_versions(self.FUNCTION_NAME).get_data())
 
-            latest_version = dict()
-            latest_version['CodeSize'] = self.CODE_SIZE
-            latest_version['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':$LATEST'
-            latest_version['FunctionName'] = str(self.FUNCTION_NAME)
-            latest_version['Handler'] = str(self.HANDLER)
-            latest_version['Runtime'] = str(self.RUNTIME)
-            latest_version['Timeout'] = self.TIMEOUT
-            latest_version['Version'] = '$LATEST'
-            latest_version['Environment'] = {}
-            version1 = dict(latest_version)
-            version1['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':1'
-            version1['Version'] = '1'
-            version1['Environment'] = {}
-            version2 = dict(latest_version)
-            version2['FunctionArn'] = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':2'
-            version2['Version'] = '2'
-            version2['Environment'] = {}
-            expected_result = {'Versions': sorted([latest_version, version1, version2],
-                                                  key=lambda k: str(k.get('Version')))}
+            latest_config = aws_models.FunctionConfiguration(
+                code_size=self.CODE_SIZE,
+                function_arn=str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':$LATEST',
+                function_name=str(self.FUNCTION_NAME),
+                handler=str(self.HANDLER),
+                runtime=str(self.RUNTIME),
+                timeout=self.TIMEOUT,
+                version='$LATEST',
+            )
+            version1_config = copy.deepcopy(latest_config)
+            version1_config.FunctionArn = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':1'
+            version1_config.Version = '1'
+            version2_config = copy.deepcopy(latest_config)
+            version2_config.FunctionArn = str(lambda_api.func_arn(self.FUNCTION_NAME)) + ':2'
+            version2_config.Version = '2'
+            expected_result = {
+                'Versions': sorted([
+                    latest_config.to_dict(), version1_config.to_dict(), version2_config.to_dict()
+                ], key=lambda k: str(k.get('Version')))}
             self.assertDictEqual(expected_result, result)
 
     def test_list_non_existant_function_versions_returns_error(self):
@@ -253,9 +253,14 @@ class TestLambdaAPI(unittest.TestCase):
     def _create_function(self, function_name):
         arn = lambda_api.func_arn(function_name)
         config = aws_models.FunctionConfiguration(
-            code_size=self.CODE_SIZE, handler=self.HANDLER, runtime=self.RUNTIME,
-            timeout=self.TIMEOUT)
+            function_name=function_name,
+            function_arn=arn,
+            code_size=self.CODE_SIZE,
+            handler=self.HANDLER,
+            runtime=self.RUNTIME,
+            timeout=self.TIMEOUT,
+            version='$LATEST')
         mapping = aws_models.FunctionMapping(
-            executor=lambda x: x,
+            executor=None,
             function_configuration=config)
         lambda_api.arn_to_lambda[arn] = aws_models.LambdaFunction(arn, {'$LATEST': mapping})

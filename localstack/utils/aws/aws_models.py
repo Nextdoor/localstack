@@ -177,7 +177,7 @@ class LambdaFunction(Component):
         return self.versions.get(version)
 
     def name(self):
-        return self.versions['$LATEST'].FunctionName
+        return self.versions['$LATEST'].function_configuration.FunctionName
 
     def arn(self):
         return self.id
@@ -270,6 +270,57 @@ class FunctionConfiguration(DictSerializable):
         self.Version = version
         self.VpcConfig = vpc_config
 
+    def to_dict(self, latest_arn=False):
+        """Converts a FunctionConfiguration to a dict
+
+        Keyword Args:
+            latest_arn (bool): Whether or not to add '$LATEST' to the FunctionArn.
+                Note: For non-latest versions, the version suffix, is required.
+        """
+        result = super(FunctionConfiguration, self).to_dict()
+        if latest_arn and self.Version == '$LATEST':
+            result['FunctionArn'] += ':$LATEST'
+        return result
+
+    @classmethod
+    def from_json(cls, json_data):
+        environment = None
+        if 'Environment' in json_data:
+            environment = Environment.from_json(json_data['Environment'])
+
+        dead_letter_config = None
+        if 'DeadLetterConfig' in json_data:
+            dead_letter_config = DeadLetterConfig.from_json(json_data['DeadLetterConfig'])
+
+        tracing_config = None
+        if 'TracingConfig' in json_data:
+            tracing_config = TracingConfig.from_json(json_data['TracingConfig'])
+
+        vpc_config = None
+        if 'VpcConfig' in json_data:
+            vpc_config = VpcConfig.from_json(json_data['VpcConfig'])
+
+        return cls(
+            code_sha_256=json_data.get('CodeSha256'),
+            code_size=json_data.get('CodeSize'),
+            dead_letter_config=dead_letter_config,
+            description=json_data.get('Description'),
+            environment=environment,
+            function_arn=json_data.get('FunctionArn'),
+            function_name=json_data.get('FunctionName'),
+            handler=json_data.get('Handler'),
+            kms_key_arn=json_data.get('KMSKeyArn'),
+            last_modified=json_data.get('LastModified'),
+            master_arn=json_data.get('MasterArn'),
+            memory_size=json_data.get('MemorySize'),
+            revision_id=json_data.get('RevisionId'),
+            role=json_data.get('Role'),
+            runtime=json_data.get('Runtime'),
+            timeout=json_data.get('Timeout'),
+            tracing_config=tracing_config,
+            version=json_data.get('Version'),
+            vpc_config=vpc_config)
+
 
 class Environment(DictSerializable):
     """https://docs.aws.amazon.com/lambda/latest/dg/API_EnvironmentResponse.html"""
@@ -308,6 +359,13 @@ class VpcConfig(DictSerializable):
         self.SecurityGroupIds = security_group_ids
         self.SubnetIds = subnet_ids
         self.VpcId = vpc_id
+
+    @classmethod
+    def from_json(cls, json_data):
+        return cls(
+            security_group_ids=json_data['SecurityGroupIds'],
+            subnet_ids=json_data['SubnetIds'],
+            vpc_id=json_data['VpcId'])
 
 
 class DynamoDB(Component):

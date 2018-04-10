@@ -217,8 +217,12 @@ def publish_new_function_version(arn):
         last_version = 0
     else:
         last_version = max([int(key) for key in versions.keys() if key != '$LATEST'])
+    new_version = str(last_version + 1)
     function_mapping_copy = copy.deepcopy(versions['$LATEST'])
-    versions[str(last_version + 1)] = copy.deepcopy(function_mapping_copy)
+    function_mapping_copy.function_configuration.Version = new_version
+    # The version suffix is required in the API for non-latest versions, so we add it here.
+    function_mapping_copy.function_configuration.FunctionArn = arn + ':{}'.format(new_version)
+    versions[new_version] = function_mapping_copy
     return function_mapping_copy.function_configuration.to_dict()
 
 
@@ -233,7 +237,7 @@ def get_version_function_mappings(arn):
     """
     func_details = arn_to_lambda[arn]
     sorted_versions = sorted(func_details.versions.keys())
-    return [func_details[version] for version in sorted_versions]
+    return [func_details.versions[version] for version in sorted_versions]
 
 
 def do_update_alias(arn, alias, version, description=None):
@@ -403,7 +407,7 @@ def set_function_code(code, function_config):
         try:
             lambda_handler = exec_lambda_code(zip_file_content,
                 handler_function=handler_function, lambda_cwd=lambda_cwd,
-                lambda_env=lambda_environment)
+                lambda_env=lambda_environment and lambda_environment.Variables)
         except Exception as e:
             raise Exception('Unable to get handler function from lambda code.', e)
 
@@ -481,7 +485,7 @@ def create_function():
         arn_to_lambda[arn] = aws_models.LambdaFunction(arn=arn, versions=versions)
         return jsonify(function_config.to_dict())
     except Exception as e:
-        del arn_to_lambda[arn]
+        arn_to_lambda.pop(arn, None)
         return error_response('Unknown error: %s %s' % (e, traceback.format_exc()))
 
 
@@ -498,7 +502,7 @@ def get_function(function):
     """
     funcs = do_list_functions()
     for func in funcs:
-        if func.latest().FunctionName == function:
+        if func['FunctionName'] == function:
             result = {
                 'Configuration': func,
                 'Code': {
@@ -774,7 +778,8 @@ def list_versions(function):
     if arn not in arn_to_lambda:
         return error_response('Function not found: %s' % arn, 404, error_type='ResourceNotFoundException')
     function_mappings = get_version_function_mappings(arn)
-    function_configurations = [fm.function_configuration.to_dict() for fm in function_mappings]
+    function_configurations = [
+        fm.function_configuration.to_dict(latest_arn=True) for fm in function_mappings]
     return jsonify({'Versions': function_configurations})
 
 
