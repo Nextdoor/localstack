@@ -329,11 +329,9 @@ def error_response(msg, code=500, error_type='InternalFailure'):
 def get_zip_bytes(function_code):
     """Returns the ZIP file contents from a FunctionCode dict.
 
-    Args:
-        function_code (dict): Dict of type FunctionCode.
-
-    Returns:
-        bytes: bytes of the Zip file.
+    :type function_code: dict
+    :param function_code: https://docs.aws.amazon.com/lambda/latest/dg/API_FunctionCode.html
+    :returns: bytes of the Zip file.
     """
     if 'S3Bucket' in function_code:
         s3_client = aws_stack.connect_to_service('s3')
@@ -354,10 +352,14 @@ def get_zip_bytes(function_code):
 def get_java_handler(zip_file_content, handler, main_file):
     """Creates a Java handler from an uploaded ZIP or JAR.
 
-    Args:
-        zip_file_content (bytes): ZIP file bytes.
-        handler (str): The Lambda handler path.
-        main_file (str): Filepath to the uploaded ZIP or JAR file.
+    :type zip_file_content: bytes
+    :param zip_file_content: ZIP file bytes.
+    :type handler: str
+    :param handler: THe lambda handler path.
+    :type main_file: str
+    :param main_file: Filepath to the uploaded ZIP or JAR file.
+
+    :returns: function or flask.Response
     """
     if is_jar_archive(zip_file_content):
         def execute(event, context):
