@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import base64
 import copy
 import imp
 import json
@@ -12,6 +13,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime
+from io import BytesIO
 from six import iteritems
 from six.moves import cStringIO as StringIO
 
