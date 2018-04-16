@@ -430,12 +430,15 @@ def set_function_code(code, function_config):
                 error_type='ValidationError')
 
         if runtime.startswith('python') and not use_docker():
+            environment_variables = {}
+            if lambda_environment and lambda_environment.Variables:
+                environment_variables = lambda_environment.Variables
             try:
                 lambda_handler = exec_lambda_code(
                     zip_file_content,
                     handler_function=handler_function,
                     lambda_cwd=lambda_cwd,
-                    lambda_env=lambda_environment)
+                    lambda_env=environment_variables)
             except Exception as e:
                 raise Exception('Unable to get handler function from lambda code.', e)
 
