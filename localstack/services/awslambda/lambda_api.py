@@ -604,7 +604,7 @@ def update_function_code(function):
             - name: 'request'
               in: body
     """
-    data = request.json()
+    data = json.loads(to_str(request.data))
     arn = func_arn(function)
     function_definition = arn_to_lambda[arn]
     latest_mapping = function_definition.latest()
