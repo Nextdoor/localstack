@@ -494,6 +494,7 @@ def create_function():
         function_config = aws_models.FunctionConfiguration(
             code_size=50,
             dead_letter_config=dead_letter_config,
+            description=data.get('Description'),
             environment=environment,
             function_arn=arn,
             function_name=lambda_name,
