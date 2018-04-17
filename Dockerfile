@@ -14,6 +14,7 @@ ADD localstack/utils/kinesis/ localstack/utils/kinesis/
 ADD localstack/ext/ localstack/ext/
 
 # install dependencies
+RUN apk add linux-headers musl-dev gcc python-dev
 RUN make install
 
 # add files required to run "make init"
