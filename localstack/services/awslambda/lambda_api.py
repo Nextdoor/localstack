@@ -74,7 +74,29 @@ LAMBDA_EXECUTOR = lambda_executors.AVAILABLE_EXECUTORS.get(config.LAMBDA_EXECUTO
 
 
 class LambdaContext(object):
-    def get_remaining_time_in_millis(self):
+    def __init__(self, function_name, function_version, invoked_function_arn):
+        """Content that is passed to the lambda function.
+
+        :type function_name: str
+        :param function_name: Name of the function.
+        :type function_version: str
+        :param function_version: Version tag of the function.
+        :type invoked_function_arn: str
+        :param invoked_function_arn: ARN of the function that is currently running.
+        """
+        self.function_name = function_name
+        self.function_version = function_version
+        self.invoked_function_arn = invoked_function_arn
+
+    def to_dict(self):
+        return {
+            'functionName': self.function_name,
+            'functionVersion': self.function_version,
+            'invokedFunctionARN': self.invoked_function_arn
+        }
+
+    @staticmethod
+    def get_remaining_time_in_millis():
         # TODO implement!
         return 1000 * 60
 
@@ -183,21 +205,24 @@ def process_sns_notification(func_arn, topic_arn, message, subject=''):
         LOG.warning('Unable to run Lambda function on SNS message: %s %s' % (e, traceback.format_exc()))
 
 
-def process_kinesis_records(records, stream_name):
-    # feed records into listening lambdas
+def process_kinesis_records(events, stream_name):
+    """Invokes Lambda functions that may be listening for Kinesis events.
+
+    :type events: LambdaKinesisEvent
+    :param events: An event to send to the invoked lambda.
+    :type stream_name: str
+    :param stream_name: Name of the stream the events are coming from.
+    """
     try:
         stream_arn = aws_stack.kinesis_stream_arn(stream_name)
         sources = get_event_sources(source_arn=stream_arn)
+        LOG.error("%s %s", stream_name, stream_arn)
         for source in sources:
             arn = source['FunctionArn']
-            event = {
-                'Records': []
+            lambda_records = {
+                'Records': [event.to_dict() for event in events]
             }
-            for rec in records:
-                event['Records'].append({
-                    'kinesis': rec
-                })
-            run_lambda(event=event, context={}, func_arn=arn)
+            run_lambda(event=lambda_records, context={}, func_arn=arn)
     except Exception as e:
         LOG.warning('Unable to run Lambda function on Kinesis records: %s %s' % (e, traceback.format_exc()))
 
@@ -262,7 +287,7 @@ def run_lambda(event, context, func_arn, version=None, suppress_output=False, as
     try:
         func_details = arn_to_lambda.get(func_arn)
         if not context:
-            context = LambdaContext()
+            context = LambdaContext(func_details.name(), version or '$LATEST', func_details.arn())
         result, log_output = LAMBDA_EXECUTOR.execute(func_arn, func_details,
             event, context=context, version=version, async=async)
     except Exception as e:

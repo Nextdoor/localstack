@@ -156,6 +156,52 @@ class FirehoseStream(KinesisStream):
         return self.id.split(':deliverystream/')[-1]
 
 
+class LambdaKinesisEvent(object):
+    """An event provided to a Lambda function from a Kinesis source.
+
+    https://docs.aws.amazon.com/lambda/latest/dg/eventsources.html#eventsources-kinesis-streams
+    """
+    def __init__(self, event_source_arn, event_id, aws_region,
+                 data, partition_key, sequence_number):
+        """Initializes the event.
+
+        :type event_source_arn: str
+        :param event_source_arn: ARN of the stream.
+        :type event_id: str
+        :param event_id: ID of the event (shardId-<shard_id>:<sequence_number>).
+        :type aws_region: str
+        :param aws_region: Region the Kinesis event is sent from.
+        :type data: str
+        :param data: Kinesis data.
+        :type partition_key: str
+        :param partition_key: Kinesis partition key.
+        :type sequence_number: str
+        :param sequence_number: Kinesis sequence number.
+        """
+        self.event_source_arn = event_source_arn
+        self.event_id = event_id
+        self.aws_region = aws_region
+        self.data = data
+        self.partition_key = partition_key
+        self.sequence_number = sequence_number
+
+    def to_dict(self):
+        return {
+            'eventVersion': '1.0',
+            'eventName': 'aws:kinesis:record',
+            'eventSource': 'aws:kinesis',
+            'eventSourceARN': self.event_source_arn,
+            'eventID': self.event_id,
+            'awsRegion': self.aws_region,
+            'kinesis': {
+                'kinesisSchemaVersion': '1.0',
+                'data': self.data,
+                'partitionKey': self.partition_key,
+                'sequenceNumber': self.sequence_number
+            }
+        }
+
+
 class LambdaFunction(Component):
     def __init__(self, arn, versions):
         """Initializes a LambdaFunction.

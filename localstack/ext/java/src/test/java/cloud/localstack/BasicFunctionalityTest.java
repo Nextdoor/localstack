@@ -2,8 +2,7 @@ package cloud.localstack;
 
 import static cloud.localstack.TestUtils.TEST_CREDENTIALS;
 
-import java.io.File;
-import java.io.FileOutputStream;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -12,6 +11,7 @@ import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import cloud.localstack.sample.CustomHandlerNameKinesisHandler;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -106,6 +106,54 @@ public class BasicFunctionalityTest {
 		// push event
 		kinesis.putRecord(streamName, ByteBuffer.wrap("{\"foo\": \"bar\"}".getBytes()), "partitionKey1");
 		// TODO: have Lambda store the record to S3, retrieve it from there, compare result
+	}
+
+	@Test
+	public void testCustomHandlerKinesisLambdaIntegration() throws Exception {
+		InputStream errorStream = LocalstackTestRunner.getInfrastructureErrorStream();
+		if (errorStream == null) {
+			throw new Exception("infrastructure has no error stream");
+		}
+		BufferedReader reader = new BufferedReader(new InputStreamReader(errorStream));
+
+		AmazonKinesis kinesis = TestUtils.getClientKinesis();
+		AWSLambda lambda = TestUtils.getClientLambda();
+		String functionName = UUID.randomUUID().toString();
+		String streamName = UUID.randomUUID().toString();
+
+		// create function
+		CreateFunctionRequest request = new CreateFunctionRequest();
+		request.setFunctionName(functionName);
+		request.setRuntime(Runtime.Java8);
+		request.setCode(LocalTestUtil.createFunctionCode(CustomHandlerNameKinesisHandler.class));
+		request.setHandler(CustomHandlerNameKinesisHandler.class.getName() + "::" + "customHandler");
+		lambda.createFunction(request);
+
+		// create stream
+		kinesis.createStream(streamName, 1);
+		Thread.sleep(500);
+		String streamArn = kinesis.describeStream(streamName).getStreamDescription().getStreamARN();
+
+		// create mapping
+		CreateEventSourceMappingRequest mapping = new CreateEventSourceMappingRequest();
+		mapping.setFunctionName(functionName);
+		mapping.setEventSourceArn(streamArn);
+		mapping.setStartingPosition("LATEST");
+		lambda.createEventSourceMapping(mapping);
+
+		// push event
+		kinesis.putRecord(streamName, ByteBuffer.wrap("{\"foo\": \"bar\"}".getBytes()), "partitionKey1");
+
+		// ensure the handler was triggered by reading it's output from the infrastructure process.
+		String line;
+		while ((line = reader.readLine()) != null) {
+			System.out.println(line);
+			if (line.contains("Kinesis record:")) {
+				Assert.assertTrue(line.contains("{\"foo\": \"bar\"}"));
+				return;
+			}
+		}
+		throw new Exception("Did not find kinesis record.");
 	}
 
 	@Test
