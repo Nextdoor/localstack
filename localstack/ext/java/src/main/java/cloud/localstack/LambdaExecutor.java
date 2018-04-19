@@ -16,7 +16,9 @@ import org.joda.time.DateTime;
 import sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl;
 
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
@@ -25,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -34,17 +37,26 @@ import java.util.stream.Collectors;
  */
 @SuppressWarnings("restriction")
 public class LambdaExecutor {
+	private static final Logger LOG = Logger.getLogger(LambdaExecutor.class.getName());
 
 	@SuppressWarnings("unchecked")
 	public static void main(String[] args) throws Exception {
 		if(args.length < 3) {
 			System.err.println("Usage: java " + LambdaExecutor.class.getSimpleName() +
-					" <lambdaClass> <handlerMethodName> <recordsFilePath>");
+					" <lambdaClass> <handlerMethodName> <lambdaContextJson> <recordsFilePath>");
 			System.exit(1);
 		}
 		String lambdaClassName = args[0];
 		String handlerMethodName = args[1];
-		String recordsFilePath = args[2];
+		String lambdaContextJson = args[2];
+		String recordsFilePath = args[3];
+
+		ObjectMapper contextReader = new ObjectMapper();
+		Map<String, String> contextMap = contextReader.readerFor(Map.class).readValue(lambdaContextJson);
+		Context ctx = new LambdaContext(
+				contextMap.get("functionName"),
+				contextMap.get("functionVersion"),
+				contextMap.get("invokedFunctionARN"));
 
 		String fileContent = readFile(recordsFilePath);
 		ObjectMapper reader = new ObjectMapper();
@@ -61,27 +73,8 @@ public class LambdaExecutor {
 			}
 		} else {
 			if (records.stream().anyMatch(record -> record.containsKey("kinesis"))) {
-				KinesisEvent kinesisEvent = new KinesisEvent();
-				inputObject = kinesisEvent;
-				kinesisEvent.setRecords(new LinkedList<>());
-				for (Map<String, Object> record : records) {
-					KinesisEventRecord r = new KinesisEventRecord();
-					kinesisEvent.getRecords().add(r);
-					Record kinesisRecord = new Record();
-					Map<String, Object> kinesis = (Map<String, Object>) get(record, "kinesis");
-					r.setAwsRegion((String) record.get("awsRegion"));
-					r.setEventSource((String) record.get("eventSource"));
-					r.setEventSourceARN((String) record.get("eventSourceARN"));
-					r.setEventID((String) record.get("eventID"));
-					r.setEventName((String) record.get("eventName"));
-
-					String dataString = new String(get(kinesis, "data").toString().getBytes());
-					byte[] decodedData = Base64.getDecoder().decode(dataString);
-					kinesisRecord.setData(ByteBuffer.wrap(decodedData));
-						kinesisRecord.setPartitionKey((String) get(kinesis, "partitionKey"));
-						kinesisRecord.setApproximateArrivalTimestamp(new Date());
-						r.setKinesis(kinesisRecord);
-				}
+				handleKinesis(ctx, handler, handlerMethodName, records, fileContent);
+				return;
 			} else if (records.stream().anyMatch(record -> record.containsKey("Sns"))) {
 				SNSEvent snsEvent = new SNSEvent();
 				inputObject = snsEvent;
@@ -104,10 +97,8 @@ public class LambdaExecutor {
 			}
 			//TODO: Support other events (S3, SQS...)
 		}
-		Context ctx = new LambdaContext("name", "version", "arn:aws:lambda:us-west-2:329239342014:function:us1_pubsub-business-to-ness:dev");
-		Method method = handler.getClass().getMethod(handlerMethodName, KinesisEvent.class, Context.class);
-		try {
-			Object result = method.invoke(handler, inputObject, ctx);
+		if (handler instanceof RequestHandler) {
+			Object result = ((RequestHandler<Object, ?>) handler).handleRequest(inputObject, ctx);
 			// try turning the output into json
 			try {
 				result = new ObjectMapper().writeValueAsString(result);
@@ -116,16 +107,98 @@ public class LambdaExecutor {
 			}
 			// The contract with lambci is to print the result to stdout, whereas logs go to stderr
 			System.out.println(result);
-		} catch (IllegalAccessException|InvocationTargetException|IllegalArgumentException e1) {
-			// Might be a stream handler.
+		} else if (handler instanceof RequestStreamHandler) {
+			OutputStream os = new ByteArrayOutputStream();
+			((RequestStreamHandler) handler).handleRequest(
+					new StringInputStream(fileContent), os, ctx);
+			System.out.println(os);
+		}
+	}
+
+	private static void handleKinesis(Context ctx, Object handler, String handlerMethodName,
+									 List<Map<String,Object>> records, String fileContent) {
+		KinesisEvent kinesisEvent = new KinesisEvent();
+		kinesisEvent.setRecords(new LinkedList<>());
+		for (Map<String, Object> record : records) {
+			KinesisEventRecord r = new KinesisEventRecord();
+			// Add all of the metadata to the record.
+			r.setAwsRegion((String) record.get("awsRegion"));
+			r.setEventSource((String) record.get("eventSource"));
+			r.setEventSourceARN((String) record.get("eventSourceARN"));
+			r.setEventID((String) record.get("eventID"));
+			r.setEventName((String) record.get("eventName"));
+
+			// Add the Kinesis records themselves.
+			kinesisEvent.getRecords().add(r);
+			Record kinesisRecord = new Record();
+			Map<String, Object> kinesis = (Map<String, Object>) get(record, "kinesis");
+			String dataString = new String(get(kinesis, "data").toString().getBytes());
+			byte[] decodedData = Base64.getDecoder().decode(dataString);
+			kinesisRecord.setData(ByteBuffer.wrap(decodedData));
+			kinesisRecord.setPartitionKey((String) get(kinesis, "partitionKey"));
+			kinesisRecord.setApproximateArrivalTimestamp(new Date());
+			r.setKinesis(kinesisRecord);
+		}
+
+		// Try matching the handler against the known handler signatures:
+		// https://docs.aws.amazon.com/lambda/latest/dg/java-programming-model-req-resp.html
+		Object result = null;
+		Method kinesisMethod = getKinesisMethod(handler, handlerMethodName);
+		if (kinesisMethod != null) {
 			try {
-				OutputStream os = new ByteArrayOutputStream();
-				method.invoke(handler, new StringInputStream(fileContent), os, ctx);
-				System.out.println(os);
-			} catch (IllegalAccessException|InvocationTargetException|IllegalArgumentException e2) {
-				System.out.println("unable to invoke handler" );
-				System.out.println(e2);
+				result = kinesisMethod.invoke(handler, kinesisEvent, ctx);
+				System.out.println(result);
+			} catch (IllegalAccessException|InvocationTargetException e) {
+				LOG.warning(e.toString());
 			}
+			return;
+		}
+
+		Method streamMethod = getStreamMethod(handler, handlerMethodName);
+		if (streamMethod != null) {
+			StringInputStream inputStream;
+			try {
+				inputStream = new StringInputStream(fileContent);
+			} catch (UnsupportedEncodingException e) {
+				LOG.warning(e.toString());
+				return;
+			}
+
+			try {
+				Method method = handler.getClass().getMethod(
+						handlerMethodName, InputStream.class, OutputStream.class, Context.class);
+				OutputStream outputStream = new ByteArrayOutputStream();
+				result = method.invoke(handler, inputStream, outputStream, ctx);
+			} catch (NoSuchMethodException|IllegalAccessException|InvocationTargetException e) {
+				LOG.warning("unable to invoke handler method");
+				LOG.warning(e.toString());
+				return;
+			}
+		}
+		// The contract with lambci is to print the result to stdout, whereas logs go to stderr
+		if (result == null) {
+			LOG.warning("lambda handler did not match any known method signature");
+			return;
+		}
+
+		// The contract with lambci is to print the result to stdout, whereas logs go to stderr
+		System.out.println(result);
+	}
+
+	private static Method getKinesisMethod(Object handler, String handlerMethodName) {
+		try {
+			return handler.getClass().getMethod(handlerMethodName, KinesisEvent.class, Context.class);
+		} catch (NoSuchMethodException e) {
+			return null;
+		}
+	}
+
+	private static Method getStreamMethod(Object handler, String handlerMethodName) {
+		try {
+			return handler.getClass().getMethod(
+					handlerMethodName, InputStream.class, OutputStream.class, Context.class);
+		} catch (NoSuchMethodException e) {
+			return null;
 		}
 	}
 

@@ -1,11 +1,15 @@
 import random
 import json
 from requests.models import Response
+
 from localstack import config
-from localstack.utils.common import to_str
-from localstack.utils.analytics import event_publisher
+from localstack import constants
 from localstack.services.awslambda import lambda_api
 from localstack.services.generic_proxy import ProxyListener
+from localstack.utils.analytics import event_publisher
+from localstack.utils.aws import aws_models
+from localstack.utils.aws import aws_stack
+from localstack.utils.common import to_str
 
 # action headers
 ACTION_PREFIX = 'Kinesis_20131202'
@@ -34,29 +38,40 @@ class ProxyListenerKinesis(ProxyListener):
             event_publisher.fire_event(event_type, payload={'n': event_publisher.get_hash(data.get('StreamName'))})
         elif action == ACTION_PUT_RECORD:
             response_body = json.loads(to_str(response.content))
-            event_record = {
-                'data': data['Data'],
-                'partitionKey': data['PartitionKey'],
-                'sequenceNumber': response_body.get('SequenceNumber')
-            }
-            event_records = [event_record]
+            event_records = [create_kinesis_event(data, response_body)]
             stream_name = data['StreamName']
             lambda_api.process_kinesis_records(event_records, stream_name)
         elif action == ACTION_PUT_RECORDS:
-            event_records = []
             response_body = json.loads(to_str(response.content))
-            response_records = response_body['Records']
-            records = data['Records']
-            for index in range(0, len(records)):
-                record = records[index]
-                event_record = {
-                    'data': record['Data'],
-                    'partitionKey': record['PartitionKey'],
-                    'sequenceNumber': response_records[index].get('SequenceNumber')
-                }
-                event_records.append(event_record)
+            event_records = [
+                create_kinesis_event(record_data, response_data)
+                for record_data, response_data in
+                zip(data['Records'], response_body['Records'])]
             stream_name = data['StreamName']
             lambda_api.process_kinesis_records(event_records, stream_name)
+
+
+def create_kinesis_event(record_data, response_data):
+    """Creates a LambdaKinesisEvent from a PutRecord request / response.
+
+    :type record_data: dict
+    :param record_data: Record data sent to Kinesis
+        (https://docs.aws.amazon.com/kinesis/latest/APIReference/API_Record.html)
+    :type response_data: dict
+    :param response_data: Response data for an individual record.
+        (https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecordsResultEntry.html)
+    """
+    stream_name = record_data['StreamName']
+    sequence_num = response_data.get('SequenceNumber')
+    shard_id = response_data.get('ShardId')
+    region = constants.DEFAULT_REGION
+    return aws_models.LambdaKinesisEvent(
+        aws_stack.kinesis_stream_arn(stream_name),
+        event_id=':'.join((shard_id, sequence_num)),
+        aws_region=region,
+        data=record_data['Data'],
+        partition_key=record_data['PartitionKey'],
+        sequence_number=sequence_num)
 
 
 # instantiate listener

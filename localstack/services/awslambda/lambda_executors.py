@@ -468,9 +468,18 @@ class LambdaExecutorLocal(LambdaExecutor):
         event_file = EVENT_FILE_PATTERN.replace('*', short_uid())
         save_file(event_file, json.dumps(event))
         TMP_FILES.append(event_file)
-        class_name = handler.split('::')[0]
-        classpath = '%s:%s' % (LAMBDA_EXECUTOR_JAR, main_file)
-        cmd = 'java -cp %s %s %s %s' % (classpath, LAMBDA_EXECUTOR_CLASS, class_name, event_file)
+
+        handler_class_name, handler_method_name = handler.split('::')
+        classpath = ':'.join((LAMBDA_EXECUTOR_JAR, main_file))
+        cmd = (
+            'java -cp {classpath} {lambda_executor_class} {handler_class_name} '
+            "{handler_method_name} '{lambda_context_json}' {records_file_path}".format(
+                classpath=classpath,
+                lambda_executor_class=LAMBDA_EXECUTOR_CLASS,
+                handler_class_name=handler_class_name,
+                handler_method_name=handler_method_name,
+                lambda_context_json=json.dumps(context.to_dict()),
+                records_file_path=event_file))
         async = False
         # flip async flag depending on origin
         if 'Records' in event:

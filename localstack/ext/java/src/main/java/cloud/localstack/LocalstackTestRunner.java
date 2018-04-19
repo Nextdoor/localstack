@@ -6,10 +6,7 @@ import org.junit.runners.BlockJUnit4ClassRunner;
 import org.junit.runners.model.InitializationError;
 import org.ow2.proactive.process_tree_killer.ProcessTree;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -139,7 +136,8 @@ public class LocalstackTestRunner extends BlockJUnit4ClassRunner {
 			LOG.info(logMsg);
 			messagePrinted = true;
 			deleteDirectory(dir);
-			exec("git clone " + LOCALSTACK_REPO_URL + " " + TMP_INSTALL_DIR);
+			exec("cp -R ../../../ " + TMP_INSTALL_DIR);
+//			exec("git clone " + LOCALSTACK_REPO_URL + " " + TMP_INSTALL_DIR);
 		}
 		File installationDoneMarker = new File(dir, "localstack/infra/installation.finished.marker");
 		if(!installationDoneMarker.exists()) {
@@ -218,6 +216,10 @@ public class LocalstackTestRunner extends BlockJUnit4ClassRunner {
 			ProcessBuilder builder = new ProcessBuilder(cmd);
 			builder.environment().put("PATH", ADDITIONAL_PATH + ":" + env.get("PATH"));
 			builder.environment().put(ENV_LOCALSTACK_PROCESS_GROUP, ENV_LOCALSTACK_PROCESS_GROUP);
+			builder.environment().put("DEFAULT_REGION", getDefaultRegion());
+			builder.environment().put("AWS_REGION", getDefaultRegion());
+			builder.environment().put("AWS_DEFAULT_REGION", getDefaultRegion());
+			builder.environment().put("DEBUG", "1");
 			final Process p = builder.start();
 			if (wait) {
 				int code = p.waitFor();
@@ -274,6 +276,14 @@ public class LocalstackTestRunner extends BlockJUnit4ClassRunner {
 				throw new RuntimeException(e);
 			}
 		}
+	}
+
+	public static InputStream getInfrastructureErrorStream() {
+		Process proc = INFRA_STARTED.get();
+		if (proc == null) {
+			return null;
+		}
+		return proc.getErrorStream();
 	}
 
 	public static void teardownInfrastructure() {
