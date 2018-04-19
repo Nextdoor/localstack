@@ -28,7 +28,6 @@ class ProxyListenerKinesis(ProxyListener):
         action = headers.get('X-Amz-Target')
         data = json.loads(to_str(data))
 
-        records = []
         if action in (ACTION_CREATE_STREAM, ACTION_DELETE_STREAM):
             event_type = (event_publisher.EVENT_KINESIS_CREATE_STREAM if action == ACTION_CREATE_STREAM
                 else event_publisher.EVENT_KINESIS_DELETE_STREAM)

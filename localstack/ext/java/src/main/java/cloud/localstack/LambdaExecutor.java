@@ -18,6 +18,7 @@ import sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl;
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -36,27 +37,30 @@ public class LambdaExecutor {
 
 	@SuppressWarnings("unchecked")
 	public static void main(String[] args) throws Exception {
-		if(args.length < 2) {
+		if(args.length < 3) {
 			System.err.println("Usage: java " + LambdaExecutor.class.getSimpleName() +
-					" <lambdaClass> <recordsFilePath>");
+					" <lambdaClass> <handlerMethodName> <recordsFilePath>");
 			System.exit(1);
 		}
+		String lambdaClassName = args[0];
+		String handlerMethodName = args[1];
+		String recordsFilePath = args[2];
 
-		String fileContent = readFile(args[1]);
+		String fileContent = readFile(recordsFilePath);
 		ObjectMapper reader = new ObjectMapper();
 		Map<String,Object> map = reader.readerFor(Map.class).readValue(fileContent);
 
 		List<Map<String,Object>> records = (List<Map<String, Object>>) get(map, "Records");
 		Object inputObject = map;
 
-		Object handler = getHandler(args[0]);
+		Object handler = getHandler(lambdaClassName);
 		if (records == null) {
 			Optional<Object> deserialisedInput = getInputObject(reader, fileContent, handler);
 			if (deserialisedInput.isPresent()) {
 				inputObject = deserialisedInput.get();
 			}
 		} else {
-			if (records.stream().anyMatch(record -> record.containsKey("Kinesis"))) {
+			if (records.stream().anyMatch(record -> record.containsKey("kinesis"))) {
 				KinesisEvent kinesisEvent = new KinesisEvent();
 				inputObject = kinesisEvent;
 				kinesisEvent.setRecords(new LinkedList<>());
@@ -64,13 +68,19 @@ public class LambdaExecutor {
 					KinesisEventRecord r = new KinesisEventRecord();
 					kinesisEvent.getRecords().add(r);
 					Record kinesisRecord = new Record();
-					Map<String, Object> kinesis = (Map<String, Object>) get(record, "Kinesis");
-				String dataString = new String(get(kinesis, "Data").toString().getBytes());
-				byte[] decodedData = Base64.getDecoder().decode(dataString);
-				kinesisRecord.setData(ByteBuffer.wrap(decodedData));
-					kinesisRecord.setPartitionKey((String) get(kinesis, "PartitionKey"));
-					kinesisRecord.setApproximateArrivalTimestamp(new Date());
-					r.setKinesis(kinesisRecord);
+					Map<String, Object> kinesis = (Map<String, Object>) get(record, "kinesis");
+					r.setAwsRegion((String) record.get("awsRegion"));
+					r.setEventSource((String) record.get("eventSource"));
+					r.setEventSourceARN((String) record.get("eventSourceARN"));
+					r.setEventID((String) record.get("eventID"));
+					r.setEventName((String) record.get("eventName"));
+
+					String dataString = new String(get(kinesis, "data").toString().getBytes());
+					byte[] decodedData = Base64.getDecoder().decode(dataString);
+					kinesisRecord.setData(ByteBuffer.wrap(decodedData));
+						kinesisRecord.setPartitionKey((String) get(kinesis, "partitionKey"));
+						kinesisRecord.setApproximateArrivalTimestamp(new Date());
+						r.setKinesis(kinesisRecord);
 				}
 			} else if (records.stream().anyMatch(record -> record.containsKey("Sns"))) {
 				SNSEvent snsEvent = new SNSEvent();
@@ -94,10 +104,10 @@ public class LambdaExecutor {
 			}
 			//TODO: Support other events (S3, SQS...)
 		}
-
-		Context ctx = new LambdaContext();
-		if (handler instanceof RequestHandler) {
-			Object result = ((RequestHandler<Object, ?>) handler).handleRequest(inputObject, ctx);
+		Context ctx = new LambdaContext("name", "version", "arn:aws:lambda:us-west-2:329239342014:function:us1_pubsub-business-to-ness:dev");
+		Method method = handler.getClass().getMethod(handlerMethodName, KinesisEvent.class, Context.class);
+		try {
+			Object result = method.invoke(handler, inputObject, ctx);
 			// try turning the output into json
 			try {
 				result = new ObjectMapper().writeValueAsString(result);
@@ -106,11 +116,16 @@ public class LambdaExecutor {
 			}
 			// The contract with lambci is to print the result to stdout, whereas logs go to stderr
 			System.out.println(result);
-		} else if (handler instanceof RequestStreamHandler) {
-			OutputStream os = new ByteArrayOutputStream();
-			((RequestStreamHandler) handler).handleRequest(
-				new StringInputStream(fileContent), os, ctx);
-			System.out.println(os);
+		} catch (IllegalAccessException|InvocationTargetException|IllegalArgumentException e1) {
+			// Might be a stream handler.
+			try {
+				OutputStream os = new ByteArrayOutputStream();
+				method.invoke(handler, new StringInputStream(fileContent), os, ctx);
+				System.out.println(os);
+			} catch (IllegalAccessException|InvocationTargetException|IllegalArgumentException e2) {
+				System.out.println("unable to invoke handler" );
+				System.out.println(e2);
+			}
 		}
 	}
 
