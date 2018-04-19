@@ -11,6 +11,15 @@ import com.amazonaws.services.lambda.runtime.LambdaLogger;
 public class LambdaContext implements Context {
 
 	private final Logger LOG = Logger.getLogger(LambdaContext.class.getName());
+	private String functionName;
+	private String functionVersion;
+	private String invokedFunctionArn;
+
+	public LambdaContext(String functionName, String functionVersion, String invokedFunctionArn) {
+		this.functionName = functionName;
+		this.functionVersion = functionVersion;
+		this.invokedFunctionArn = invokedFunctionArn;
+	}
 
 	public LambdaLogger getLogger() {
 		return new LambdaLogger() {
@@ -31,13 +40,11 @@ public class LambdaContext implements Context {
 	}
 
 	public String getFunctionName() {
-		// TODO Auto-generated method stub
-		return null;
+		return this.functionName;
 	}
 
 	public String getFunctionVersion() {
-		// TODO Auto-generated method stub
-		return null;
+		return this.functionVersion;
 	}
 
 	public CognitoIdentity getIdentity() {
@@ -46,8 +53,7 @@ public class LambdaContext implements Context {
 	}
 
 	public String getInvokedFunctionArn() {
-		// TODO Auto-generated method stub
-		return null;
+		return this.invokedFunctionArn;
 	}
 
 	public String getLogGroupName() {
