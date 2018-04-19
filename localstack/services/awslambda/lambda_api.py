@@ -216,7 +216,6 @@ def process_kinesis_records(events, stream_name):
     try:
         stream_arn = aws_stack.kinesis_stream_arn(stream_name)
         sources = get_event_sources(source_arn=stream_arn)
-        LOG.error("%s %s", stream_name, stream_arn)
         for source in sources:
             arn = source['FunctionArn']
             lambda_records = {
@@ -287,7 +286,12 @@ def run_lambda(event, context, func_arn, version=None, suppress_output=False, as
     try:
         func_details = arn_to_lambda.get(func_arn)
         if not context:
-            context = LambdaContext(func_details.name(), version or '$LATEST', func_details.arn())
+            function_mapping = func_details.latest()
+            if version:
+                function_mapping = func_details.get_version(version)
+            function_config = function_mapping.function_configuration
+            context = LambdaContext(
+                function_config.FunctionName, function_config.Version, function_config.FunctionArn)
         result, log_output = LAMBDA_EXECUTOR.execute(func_arn, func_details,
             event, context=context, version=version, async=async)
     except Exception as e:
