@@ -121,7 +121,7 @@ def test_lambda_runtimes():
 
     # test KinesisEvent
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA,
-                                  Payload=b'{"Records": [{"Kinesis": {"Data": "data", "PartitionKey": "partition"}}]}')
+                                  Payload=b'{"Records": [{"kinesis": {"data": "data", "partitionKey": "partition"}}]}')
     assert result['StatusCode'] == 200
     result_data = result['Payload'].read()
     assert 'KinesisEvent' in to_str(result_data)

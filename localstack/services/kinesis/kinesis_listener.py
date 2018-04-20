@@ -37,23 +37,25 @@ class ProxyListenerKinesis(ProxyListener):
                 else event_publisher.EVENT_KINESIS_DELETE_STREAM)
             event_publisher.fire_event(event_type, payload={'n': event_publisher.get_hash(data.get('StreamName'))})
         elif action == ACTION_PUT_RECORD:
-            response_body = json.loads(to_str(response.content))
-            event_records = [create_kinesis_event(data, response_body)]
             stream_name = data['StreamName']
+            response_body = json.loads(to_str(response.content))
+            event_records = [create_kinesis_event(stream_name, data, response_body)]
             lambda_api.process_kinesis_records(event_records, stream_name)
         elif action == ACTION_PUT_RECORDS:
             response_body = json.loads(to_str(response.content))
+            stream_name = data['StreamName']
             event_records = [
-                create_kinesis_event(record_data, response_data)
+                create_kinesis_event(stream_name, record_data, response_data)
                 for record_data, response_data in
                 zip(data['Records'], response_body['Records'])]
-            stream_name = data['StreamName']
             lambda_api.process_kinesis_records(event_records, stream_name)
 
 
-def create_kinesis_event(record_data, response_data):
+def create_kinesis_event(stream_name, record_data, response_data):
     """Creates a LambdaKinesisEvent from a PutRecord request / response.
 
+    :type stream_name: str
+    :param stream_name: Name of thes tream.
     :type record_data: dict
     :param record_data: Record data sent to Kinesis
         (https://docs.aws.amazon.com/kinesis/latest/APIReference/API_Record.html)
@@ -61,7 +63,7 @@ def create_kinesis_event(record_data, response_data):
     :param response_data: Response data for an individual record.
         (https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecordsResultEntry.html)
     """
-    stream_name = record_data['StreamName']
+    stream_name = stream_name
     sequence_num = response_data.get('SequenceNumber')
     shard_id = response_data.get('ShardId')
     region = constants.DEFAULT_REGION

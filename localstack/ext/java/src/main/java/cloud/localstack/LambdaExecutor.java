@@ -140,9 +140,26 @@ public class LambdaExecutor {
 			r.setKinesis(kinesisRecord);
 		}
 
+		// Lambda supports two handler types for Java:
+		// 1) Custom POJO Input/Output with a fixed handler name ('handleRequest').
+		// 2) Custom handler function definitions that match specific signatures.
+
+		// Check for the first 'POJO' type.
+		Object result = null;
+		if (handler instanceof RequestHandler) {
+			result = ((RequestHandler<Object, ?>) handler).handleRequest(kinesisEvent, ctx);
+			// try turning the output into json
+			try {
+				result = new ObjectMapper().writeValueAsString(result);
+			} catch (JsonProcessingException jsonException) {
+				// continue with results as it is
+			}
+			System.out.println(result);
+			return;
+		}
+
 		// Try matching the handler against the known handler signatures:
 		// https://docs.aws.amazon.com/lambda/latest/dg/java-programming-model-req-resp.html
-		Object result = null;
 		Method kinesisMethod = getKinesisMethod(handler, handlerMethodName);
 		if (kinesisMethod != null) {
 			try {

@@ -511,7 +511,15 @@ class LambdaExecutorLocal(LambdaExecutor):
         save_file(event_file, json.dumps(event))
         TMP_FILES.append(event_file)
 
-        handler_class_name, handler_method_name = handler.split('::')
+        handler_paths = handler.split('::')
+        if len(handler_paths) > 1:
+            handler_class_name, handler_method_name = handler_paths
+        else:
+            # The handler uses the 'POJO' style of handler, so it must
+            # implement the interface that requires the `handleRequest` function handler.
+            handler_class_name = handler
+            handler_method_name = 'handleRequest'
+
         classpath = ':'.join((LAMBDA_EXECUTOR_JAR, main_file))
         cmd = (
             'java -cp {classpath} {lambda_executor_class} {handler_class_name} '
