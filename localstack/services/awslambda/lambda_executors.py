@@ -530,7 +530,7 @@ class LambdaExecutorLocal(LambdaExecutor):
                 handler_method_name=handler_method_name,
                 lambda_context_json=json.dumps(context.to_dict()),
                 records_file_path=event_file))
-        async = False
+        async = True
         # flip async flag depending on origin
         if 'Records' in event:
             # TODO: add more event supporting async lambda execution

@@ -221,7 +221,7 @@ def process_kinesis_records(events, stream_name):
             lambda_records = {
                 'Records': [event.to_dict() for event in events]
             }
-            run_lambda(event=lambda_records, context={}, func_arn=arn)
+            run_lambda(event=lambda_records, context={}, func_arn=arn, async=True)
     except Exception as e:
         LOG.warning('Unable to run Lambda function on Kinesis records: %s %s' % (e, traceback.format_exc()))
 

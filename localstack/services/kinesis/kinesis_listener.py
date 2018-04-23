@@ -32,6 +32,10 @@ class ProxyListenerKinesis(ProxyListener):
         action = headers.get('X-Amz-Target')
         data = json.loads(to_str(data))
 
+        # Request modification should take place when the request was unsuccessful.
+        if response.status_code > 299:
+            return
+
         if action in (ACTION_CREATE_STREAM, ACTION_DELETE_STREAM):
             event_type = (event_publisher.EVENT_KINESIS_CREATE_STREAM if action == ACTION_CREATE_STREAM
                 else event_publisher.EVENT_KINESIS_DELETE_STREAM)
