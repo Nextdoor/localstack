@@ -124,7 +124,7 @@ def test_lambda_runtimes():
                                   Payload=b'{"Records": [{"kinesis": {"data": "data", "partitionKey": "partition"}}]}')
     assert result['StatusCode'] == 200
     result_data = result['Payload'].read()
-    assert 'KinesisEvent' in to_str(result_data)
+    assert json.loads(to_str(result_data)) == {'async': 'True'}
 
     # deploy and invoke lambda - Java with stream handler
     testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA_STREAM, zip_file=test_java_jar,

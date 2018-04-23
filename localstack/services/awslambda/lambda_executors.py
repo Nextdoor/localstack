@@ -530,13 +530,15 @@ class LambdaExecutorLocal(LambdaExecutor):
                 handler_method_name=handler_method_name,
                 lambda_context_json=json.dumps(context.to_dict()),
                 records_file_path=event_file))
-        async = True
+        async = False
         # flip async flag depending on origin
         if 'Records' in event:
             # TODO: add more event supporting async lambda execution
             if 'Sns' in event['Records'][0]:
                 async = True
             if 'dynamodb' in event['Records'][0]:
+                async = True
+            if 'kinesis' in event['Records'][0]:
                 async = True
         result, log_output = self.run_lambda_executor(cmd, async=async)
         LOG.debug('Lambda result / log output:\n%s\n> %s' % (result.strip(), log_output.strip().replace('\n', '\n> ')))
