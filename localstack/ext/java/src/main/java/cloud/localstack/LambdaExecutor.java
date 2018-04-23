@@ -74,7 +74,9 @@ public class LambdaExecutor {
 		} else {
 			if (records.stream().anyMatch(record -> record.containsKey("kinesis"))) {
 				handleKinesis(ctx, handler, handlerMethodName, records, fileContent);
-				return;
+				// Need to call System.exit, otherwise any threads started within the executed code could keep the JVM up.
+				// TODO: Do this call in exactly one place.
+				System.exit(0);
 			} else if (records.stream().anyMatch(record -> record.containsKey("Sns"))) {
 				SNSEvent snsEvent = new SNSEvent();
 				inputObject = snsEvent;
@@ -113,6 +115,8 @@ public class LambdaExecutor {
 					new StringInputStream(fileContent), os, ctx);
 			System.out.println(os);
 		}
+		// Need to call System.exit, otherwise any threads started within the executed code could keep the JVM up.
+		System.exit(0);
 	}
 
 	private static void handleKinesis(Context ctx, Object handler, String handlerMethodName,
@@ -165,7 +169,9 @@ public class LambdaExecutor {
 			try {
 				result = kinesisMethod.invoke(handler, kinesisEvent, ctx);
 				System.out.println(result);
-			} catch (IllegalAccessException|InvocationTargetException e) {
+			} catch (InvocationTargetException e) {
+				LOG.warning(e.getTargetException().toString());
+			} catch (IllegalAccessException e) {
 				LOG.warning(e.toString());
 			}
 			return;
